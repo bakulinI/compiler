@@ -13,9 +13,4 @@ fmt.Println("result больше 10")
 } else {
 fmt.Println("result меньше или равен 10")
 }
-for i := 0; i < 3; i++ {
-fmt.Println("i =", i)
-}
-sum := add(x, y)
-fmt.Println("sum =", sum)
 }

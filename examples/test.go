@@ -27,13 +27,4 @@ func main() {
 	} else {
 		fmt.Println("result меньше или равен 10")
 	}
-
-	// Цикл for
-	for i := 0; i < 3; i++ {
-		fmt.Println("i =", i)
-	}
-
-	// Вызов функции
-	sum := add(x, y)
-	fmt.Println("sum =", sum)
 }

@@ -79,9 +79,19 @@ func (l *Lexer) Analyze() *LexerResult {
 			continue
 		}
 
+		if ch == '.' && l.position+1 < len(l.input) && l.input[l.position+1] == '.' {
+			l.readMalformedDotSequence()
+			continue
+		}
+
 		// Проверяем числа
 		if unicode.IsDigit(ch) {
 			l.readNumber()
+			continue
+		}
+
+		if ch == '.' && l.position+1 < len(l.input) && unicode.IsDigit(rune(l.input[l.position+1])) {
+			l.readMalformedLeadingDecimal()
 			continue
 		}
 
@@ -145,6 +155,7 @@ func (l *Lexer) readNumber() {
 	startColumn := l.column
 	hasDecimal := false
 	isValid := true
+	isInvalidIdentifier := false
 
 	for l.position < len(l.input) {
 		ch := l.input[l.position]
@@ -153,23 +164,46 @@ func (l *Lexer) readNumber() {
 			l.position++
 			l.column++
 		} else if ch == '.' && !hasDecimal {
+			if l.position+1 < len(l.input) && l.input[l.position+1] == '.' {
+				isValid = false
+				for l.position < len(l.input) && (unicode.IsDigit(rune(l.input[l.position])) || l.input[l.position] == '.') {
+					l.position++
+					l.column++
+				}
+				break
+			}
+
 			// Проверяем, что это действительно начало дробной части
 			if l.position+1 < len(l.input) && unicode.IsDigit(rune(l.input[l.position+1])) {
 				hasDecimal = true
 				l.position++
 				l.column++
 			} else {
+				isValid = false
+				l.position++
+				l.column++
 				break
 			}
 		} else if ch == '.' && hasDecimal {
 			// Две точки подряд - ошибка
 			isValid = false
-			l.position++
-			l.column++
+			for l.position < len(l.input) && (unicode.IsDigit(rune(l.input[l.position])) || l.input[l.position] == '.') {
+				l.position++
+				l.column++
+			}
 			break
-		} else if unicode.IsLetter(rune(ch)) {
+		} else if unicode.IsLetter(rune(ch)) || ch == '_' {
 			// Буквы в числе - ошибка
-			isValid = false
+			isInvalidIdentifier = true
+			for l.position < len(l.input) {
+				next := l.input[l.position]
+				if unicode.IsLetter(rune(next)) || unicode.IsDigit(rune(next)) || next == '_' {
+					l.position++
+					l.column++
+				} else {
+					break
+				}
+			}
 			break
 		} else {
 			break
@@ -177,6 +211,11 @@ func (l *Lexer) readNumber() {
 	}
 
 	value := l.input[start:l.position]
+
+	if isInvalidIdentifier {
+		l.errors = append(l.errors, NewInvalidIdentifierError(value, startLine, startColumn))
+		return
+	}
 
 	if !isValid {
 		l.errors = append(l.errors, NewMalformedNumberError(value, startLine, startColumn))
@@ -189,6 +228,42 @@ func (l *Lexer) readNumber() {
 	}
 
 	l.addToken(tokenType, value, startLine, startColumn)
+}
+
+func (l *Lexer) readMalformedDotSequence() {
+	start := l.position
+	startLine := l.line
+	startColumn := l.column
+
+	for l.position < len(l.input) {
+		ch := l.input[l.position]
+		if unicode.IsDigit(rune(ch)) || ch == '.' {
+			l.position++
+			l.column++
+		} else {
+			break
+		}
+	}
+
+	value := l.input[start:l.position]
+	l.errors = append(l.errors, NewMalformedNumberError(value, startLine, startColumn))
+}
+
+func (l *Lexer) readMalformedLeadingDecimal() {
+	start := l.position
+	startLine := l.line
+	startColumn := l.column
+
+	l.position++
+	l.column++
+
+	for l.position < len(l.input) && unicode.IsDigit(rune(l.input[l.position])) {
+		l.position++
+		l.column++
+	}
+
+	value := l.input[start:l.position]
+	l.errors = append(l.errors, NewMalformedNumberError(value, startLine, startColumn))
 }
 
 // readIdentifierOrKeyword читает идентификатор или ключевое слово
@@ -251,6 +326,25 @@ func (l *Lexer) readOperatorOrDelimiter() {
 	if l.position+1 < len(l.input) {
 		twoChar := l.input[start : l.position+2]
 		if operators[twoChar] {
+			if l.position+2 < len(l.input) && isOperatorRune(rune(l.input[l.position+2])) {
+				threeChar := l.input[start : l.position+3]
+				if operators[threeChar] {
+					l.position += 3
+					l.column += 3
+					l.addToken(OPERATOR, threeChar, startLine, startColumn)
+					return
+				}
+
+				if isSuspiciousOperatorRun(twoChar, rune(l.input[l.position+2])) {
+					for l.position < len(l.input) && isOperatorRune(rune(l.input[l.position])) {
+						l.position++
+						l.column++
+					}
+					l.errors = append(l.errors, NewUnknownOperatorError(l.input[start:l.position], startLine, startColumn))
+					return
+				}
+			}
+
 			l.position += 2
 			l.column += 2
 			l.addToken(OPERATOR, twoChar, startLine, startColumn)
@@ -259,6 +353,15 @@ func (l *Lexer) readOperatorOrDelimiter() {
 	}
 
 	// Проверяем односимвольные операторы и разделители
+	if l.position+1 < len(l.input) && isOperatorRune(rune(l.input[l.position+1])) {
+		for l.position < len(l.input) && isOperatorRune(rune(l.input[l.position])) {
+			l.position++
+			l.column++
+		}
+		l.errors = append(l.errors, NewUnknownOperatorError(l.input[start:l.position], startLine, startColumn))
+		return
+	}
+
 	oneChar := string(l.input[l.position])
 
 	if operators[oneChar] {
@@ -300,6 +403,20 @@ func (l *Lexer) isOperatorOrDelimiter(ch rune) bool {
 }
 
 // addToken добавляет токен в список
+func isOperatorRune(ch rune) bool {
+	return strings.ContainsRune("+-*/%&|^!<>=:", ch)
+}
+
+func isSuspiciousOperatorRun(twoChar string, third rune) bool {
+	if len(twoChar) != 2 {
+		return false
+	}
+
+	first := rune(twoChar[0])
+	second := rune(twoChar[1])
+	return first == second && (third == first || third == '=')
+}
+
 func (l *Lexer) addToken(tokenType TokenType, value string, line, column int) {
 	token := Token{
 		Type:   tokenType,

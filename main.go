@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"compiler_labs/internal/lexer"
+	"compiler_labs/internal/parser"
 	"compiler_labs/internal/preprocessor"
 )
 
@@ -66,4 +67,32 @@ func main() {
 		}
 	}
 	fmt.Println(result.SuccessMessage)
+
+	// Этап 3: Синтаксический анализ (ЛР3)
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	fmt.Println("=== СИНТАКСИЧЕСКИЙ АНАЛИЗ (ЛР3) ===")
+	fmt.Println(strings.Repeat("=", 50))
+
+	fmt.Println("\n=== Дерево правил грамматики ===")
+	fmt.Println(parser.GrammarRules())
+
+	if len(result.ErrorMessages) > 0 {
+		fmt.Println("\nСинтаксический анализ пропущен: сначала необходимо исправить лексические ошибки.")
+		return
+	}
+
+	parser := parser.NewParser(result.Tokens)
+	parseResult := parser.Parse()
+
+	fmt.Println("\n=== Абстрактное синтаксическое дерево (AST) ===")
+	fmt.Println(parseResult.AST.String())
+
+	fmt.Println("=== Результат синтаксического анализа ===")
+	if len(parseResult.ErrorMessages) > 0 {
+		fmt.Println("Найдены синтаксические ошибки:")
+		for _, errMsg := range parseResult.ErrorMessages {
+			fmt.Println("  - " + errMsg)
+		}
+	}
+	fmt.Println(parseResult.SuccessMessage)
 }

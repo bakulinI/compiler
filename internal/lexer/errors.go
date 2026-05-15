@@ -29,7 +29,7 @@ func NewInvalidCharError(char rune, line, column int) LexicalError {
 func NewMalformedNumberError(number string, line, column int) LexicalError {
 	return LexicalError{
 		Type:    "НЕКОРРЕКТНОЕ ЧИСЛО",
-		Message: fmt.Sprintf("Некорректное число '%s' (две точки подряд или буквы в числе)", number),
+		Message: fmt.Sprintf("Некорректное число '%s' (неверная вещественная константа, две точки подряд или буквы в числе)", number),
 		Line:    line,
 		Column:  column,
 	}

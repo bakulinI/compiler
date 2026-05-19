@@ -7,9 +7,10 @@ import (
 )
 
 type Parser struct {
-	tokens []lexer.Token
-	pos    int
-	errors []SyntaxError
+	tokens        []lexer.Token
+	pos           int
+	errors        []SyntaxError
+	variableTypes map[string]string
 }
 
 type ParseResult struct {
@@ -20,8 +21,9 @@ type ParseResult struct {
 
 func NewParser(tokens []lexer.Token) *Parser {
 	return &Parser{
-		tokens: tokens,
-		errors: make([]SyntaxError, 0),
+		tokens:        tokens,
+		errors:        make([]SyntaxError, 0),
+		variableTypes: make(map[string]string),
 	}
 }
 
@@ -85,7 +87,9 @@ func (p *Parser) parseProgram() *ASTNode {
 
 func (p *Parser) parseImportDecl() *ASTNode {
 	node := NewNode("ImportDecl")
-	p.consume(lexer.KEYWORD, "import", "ключевое слово import")
+	if token, ok := p.consume(lexer.KEYWORD, "import", "ключевое слово import"); ok {
+		node.SetPosition(token.Line, token.Column)
+	}
 	if path, ok := p.consume(lexer.CONSTANT_STR, "", "строковый путь импортируемого пакета"); ok {
 		node.AddField("path", path.Value)
 	}
@@ -94,7 +98,9 @@ func (p *Parser) parseImportDecl() *ASTNode {
 
 func (p *Parser) parseFuncDecl() *ASTNode {
 	node := NewNode("FuncDecl")
-	p.consume(lexer.KEYWORD, "func", "ключевое слово func")
+	if token, ok := p.consume(lexer.KEYWORD, "func", "ключевое слово func"); ok {
+		node.SetPosition(token.Line, token.Column)
+	}
 
 	if name, ok := p.consume(lexer.IDENTIFIER, "", "имя функции"); ok {
 		node.AddField("name", name.Value)
@@ -124,6 +130,9 @@ func (p *Parser) parseParameterList() *ASTNode {
 
 			if typ, ok := p.consumeType("тип параметра"); ok {
 				param.AddField("type", typ.Value)
+				if len(param.Fields) > 0 {
+					p.variableTypes[param.Fields[0].Value] = typ.Value
+				}
 			}
 
 			node.AddChild(param)
@@ -176,16 +185,39 @@ func (p *Parser) parseStatement() *ASTNode {
 
 func (p *Parser) parseVarDecl() *ASTNode {
 	node := NewNode("VarDecl")
-	p.consume(lexer.KEYWORD, "var", "ключевое слово var")
+	if token, ok := p.consume(lexer.KEYWORD, "var", "ключевое слово var"); ok {
+		node.SetPosition(token.Line, token.Column)
+	}
 
+	var variableName string
+	var declaredType string
 	if name, ok := p.consume(lexer.IDENTIFIER, "", "имя переменной"); ok {
 		node.AddField("name", name.Value)
+		variableName = name.Value
 	}
 	if typ, ok := p.consumeType("тип переменной"); ok {
 		node.AddField("type", typ.Value)
+		declaredType = typ.Value
+		if variableName != "" {
+			p.variableTypes[variableName] = declaredType
+		}
 	}
 	if p.match(lexer.OPERATOR, "=") {
-		node.AddChild(namedChild("value", p.parseExpression()))
+		valueToken := p.current()
+		value := p.parseExpression()
+		node.AddChild(namedChild("value", value))
+
+		if declaredType != "" {
+			actualType := p.inferExpressionType(value)
+			if actualType != "" && !isAssignableType(declaredType, actualType) {
+				p.addError(
+					"TYPE ERROR",
+					"Несовместимый тип значения при объявлении переменной",
+					declaredType,
+					lexer.Token{Type: lexer.IDENTIFIER, Value: actualType, Line: valueToken.Line, Column: valueToken.Column},
+				)
+			}
+		}
 	}
 
 	return node
@@ -194,6 +226,7 @@ func (p *Parser) parseVarDecl() *ASTNode {
 func (p *Parser) parseAssignStmt() *ASTNode {
 	node := NewNode("AssignStmt")
 	if name, ok := p.consume(lexer.IDENTIFIER, "", "левая часть присваивания"); ok {
+		node.SetPosition(name.Line, name.Column)
 		node.AddField("left", name.Value)
 	}
 	if op, ok := p.consumeAnyOperator([]string{"=", ":="}, "оператор присваивания"); ok {
@@ -349,26 +382,31 @@ func (p *Parser) parsePrimary() *ASTNode {
 	case lexer.IDENTIFIER:
 		p.advance()
 		node := NewNode("Identifier")
+		node.SetPosition(token.Line, token.Column)
 		node.AddField("name", token.Value)
 		return node
 	case lexer.CONSTANT_INT:
 		p.advance()
 		node := NewNode("IntLiteral")
+		node.SetPosition(token.Line, token.Column)
 		node.AddField("value", token.Value)
 		return node
 	case lexer.CONSTANT_REAL:
 		p.advance()
 		node := NewNode("RealLiteral")
+		node.SetPosition(token.Line, token.Column)
 		node.AddField("value", token.Value)
 		return node
 	case lexer.CONSTANT_STR:
 		p.advance()
 		node := NewNode("StringLiteral")
+		node.SetPosition(token.Line, token.Column)
 		node.AddField("value", token.Value)
 		return node
 	case lexer.CONSTANT_BOOL:
 		p.advance()
 		node := NewNode("BoolLiteral")
+		node.SetPosition(token.Line, token.Column)
 		node.AddField("value", token.Value)
 		return node
 	}
@@ -397,6 +435,98 @@ func namedChild(name string, child *ASTNode) *ASTNode {
 	node := NewNode(name)
 	node.AddChild(child)
 	return node
+}
+
+func (p *Parser) inferExpressionType(node *ASTNode) string {
+	if node == nil {
+		return ""
+	}
+
+	switch node.Name {
+	case "value", "right", "left", "condition", "GroupedExpr":
+		if len(node.Children) == 0 {
+			return ""
+		}
+		return p.inferExpressionType(node.Children[0])
+	case "IntLiteral":
+		return "int"
+	case "RealLiteral":
+		return "float64"
+	case "BoolLiteral":
+		return "bool"
+	case "StringLiteral":
+		return "string"
+	case "Identifier":
+		return p.variableTypes[fieldValue(node, "name")]
+	case "UnaryExpr":
+		operator := fieldValue(node, "operator")
+		if len(node.Children) == 0 {
+			return ""
+		}
+		operandType := p.inferExpressionType(node.Children[0])
+		if operator == "!" && operandType == "bool" {
+			return "bool"
+		}
+		if operator == "-" && isNumericType(operandType) {
+			return operandType
+		}
+	case "BinaryExpr":
+		operator := fieldValue(node, "operator")
+		leftType := p.inferExpressionType(childByName(node, "left"))
+		rightType := p.inferExpressionType(childByName(node, "right"))
+
+		switch operator {
+		case "+", "-", "*", "/", "%":
+			if isNumericType(leftType) && isNumericType(rightType) {
+				if leftType == "float64" || rightType == "float64" {
+					return "float64"
+				}
+				return "int"
+			}
+		case "&&", "||":
+			if leftType == "bool" && rightType == "bool" {
+				return "bool"
+			}
+		case "==", "!=", "<", "<=", ">", ">=":
+			if leftType != "" && rightType != "" && isAssignableType(leftType, rightType) {
+				return "bool"
+			}
+		}
+	}
+
+	return ""
+}
+
+func fieldValue(node *ASTNode, name string) string {
+	if node == nil {
+		return ""
+	}
+	for _, field := range node.Fields {
+		if field.Name == name {
+			return field.Value
+		}
+	}
+	return ""
+}
+
+func childByName(node *ASTNode, name string) *ASTNode {
+	if node == nil {
+		return nil
+	}
+	for _, child := range node.Children {
+		if child.Name == name {
+			return child
+		}
+	}
+	return nil
+}
+
+func isAssignableType(expected, actual string) bool {
+	return expected == actual || (expected == "float64" && actual == "int")
+}
+
+func isNumericType(typ string) bool {
+	return typ == "int" || typ == "float64"
 }
 
 func (p *Parser) consumeType(expected string) (lexer.Token, bool) {

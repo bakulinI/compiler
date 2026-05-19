@@ -8,6 +8,7 @@ import (
 	"compiler_labs/internal/lexer"
 	"compiler_labs/internal/parser"
 	"compiler_labs/internal/preprocessor"
+	"compiler_labs/internal/semantic"
 )
 
 func main() {
@@ -95,4 +96,32 @@ func main() {
 		}
 	}
 	fmt.Println(parseResult.SuccessMessage)
+
+	if len(parseResult.ErrorMessages) > 0 {
+		fmt.Println("\nСемантический анализ пропущен: сначала необходимо исправить синтаксические ошибки.")
+		return
+	}
+
+	// Этап 4: Семантический анализ и генерация триад (ЛР4)
+	fmt.Println("\n" + strings.Repeat("=", 50))
+	fmt.Println("=== СЕМАНТИЧЕСКИЙ АНАЛИЗ И ТРИАДЫ (ЛР4) ===")
+	fmt.Println(strings.Repeat("=", 50))
+
+	semanticAnalyzer := semantic.NewAnalyzer(parseResult.AST)
+	semanticResult := semanticAnalyzer.Analyze()
+
+	fmt.Println("\n=== Таблица символов ===")
+	fmt.Println(semanticResult.PrintSymbolTable())
+
+	fmt.Println("\n=== Промежуточное представление: триады ===")
+	fmt.Println(semanticResult.PrintTriads())
+
+	fmt.Println("=== Результат семантического анализа ===")
+	if len(semanticResult.ErrorMessages) > 0 {
+		fmt.Println("Найдены семантические ошибки:")
+		for _, errMsg := range semanticResult.ErrorMessages {
+			fmt.Println("  - " + errMsg)
+		}
+	}
+	fmt.Println(semanticResult.SuccessMessage)
 }

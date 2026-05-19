@@ -14,6 +14,8 @@ type ASTNode struct {
 	Name     string
 	Fields   []ASTField
 	Children []*ASTNode
+	Line     int
+	Column   int
 }
 
 func NewNode(name string) *ASTNode {
@@ -28,6 +30,11 @@ func (n *ASTNode) AddChild(child *ASTNode) {
 	if child != nil {
 		n.Children = append(n.Children, child)
 	}
+}
+
+func (n *ASTNode) SetPosition(line, column int) {
+	n.Line = line
+	n.Column = column
 }
 
 func (n *ASTNode) String() string {

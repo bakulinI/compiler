@@ -2,8 +2,10 @@ package main
 import "fmt"
 func main() {
 var x int = 10
-var y int = 5
 var result int
 result = x + y*2
 fmt.Println(result)
+}
+func something() {
+fmt.Println("something")
 }
